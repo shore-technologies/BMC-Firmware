@@ -1,0 +1,40 @@
+diff --git a/drivers/net/dsa/realtek/rtl8365mb.c b/drivers/net/dsa/realtek/rtl8365mb.c
+--- a/drivers/net/dsa/realtek/rtl8365mb.c
++++ b/drivers/net/dsa/realtek/rtl8365mb.c
+@@ -1722,7 +1722,6 @@
+ 				     int new_mtu)
+ {
+ 	struct realtek_priv *priv = ds->priv;
+-	int frame_size;
+ 
+ 	/* When a new MTU is set, DSA always sets the CPU port's MTU to the
+ 	 * largest MTU of the user ports. Because the switch only has a global
+@@ -1731,15 +1730,23 @@
+ 	if (!dsa_is_cpu_port(ds, port))
+ 		return 0;
+ 
+-	frame_size = new_mtu + VLAN_ETH_HLEN + ETH_FCS_LEN;
+-
+-	dev_dbg(priv->dev, "changing mtu to %d (frame size: %d)\n",
+-		new_mtu, frame_size);
++	/* Do not track the DSA MTU here: the netdev MTUs are capped by what
++	 * the CPU conduit can handle (~3774 bytes on the T113 EMAC), but
++	 * node-to-node traffic is switched entirely in hardware and never
++	 * crosses the conduit. Keep the global maximum RX frame length at
++	 * its hardware maximum so that jumbo frames (e.g. MTU 9000 between
++	 * nodes) are forwarded regardless of the conduit limit. Oversized
++	 * frames flooded to the CPU port are simply dropped by the conduit
++	 * MAC, which is harmless.
++	 */
++	dev_dbg(priv->dev,
++		"mtu change to %d requested; keeping max frame length at %d\n",
++		new_mtu, RTL8365MB_CFG0_MAX_LEN_MAX);
+ 
+ 	return regmap_update_bits(priv->map, RTL8365MB_CFG0_MAX_LEN_REG,
+ 				  RTL8365MB_CFG0_MAX_LEN_MASK,
+ 				  FIELD_PREP(RTL8365MB_CFG0_MAX_LEN_MASK,
+-					     frame_size));
++					     RTL8365MB_CFG0_MAX_LEN_MAX));
+ }
+ 
+ static int rtl8365mb_port_max_mtu(struct dsa_switch *ds, int port)

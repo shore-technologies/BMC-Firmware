@@ -1,0 +1,95 @@
+#!/bin/sh
+#
+# Network configuration failsafe.
+#
+# If a user-modified /etc/network/interfaces leaves the BMC without any
+# IPv4 address (e.g. a bond/bridge/static misconfiguration), this watchdog
+# reverts to the last known-good configuration and reboots, so the board
+# can never be permanently taken off the network by a bad config.
+#
+# Revert order:
+#   1. /etc/network/interfaces.bak   (backup made when activating a config)
+#   2. /mnt/rom/etc/network/interfaces (pristine firmware default)
+#
+# Before reverting, a diagnostic snapshot is written to
+# /etc/network/failsafe-diag.log (persisted in the overlay) so the failure
+# can be analyzed after the board is back online.
+#
+# Opt out by creating /root/.disable_net_failsafe
+# Timeout (seconds) can be overridden in /etc/default/netfailsafe
+
+TIMEOUT=300
+INTERFACES="/etc/network/interfaces"
+OVERLAY_INTERFACES="/mnt/overlay/upper/etc/network/interfaces"
+BACKUP="/etc/network/interfaces.bak"
+ROM_DEFAULT="/mnt/rom/etc/network/interfaces"
+FAILED="/etc/network/interfaces.failed"
+DIAG_LOG="/etc/network/failsafe-diag.log"
+DISABLE_MARKER="/root/.disable_net_failsafe"
+
+[ -r /etc/default/netfailsafe ] && . /etc/default/netfailsafe
+
+have_ipv4() {
+    ip -4 -o addr show scope global 2>/dev/null | grep -q .
+}
+
+diag_snapshot() {
+    {
+        echo "=== network failsafe triggered: $(date) ==="
+        echo "--- uname ---"
+        uname -a
+        echo "--- ip link ---"
+        ip -d link show
+        echo "--- ip addr ---"
+        ip addr show
+        echo "--- bonding ---"
+        for b in /proc/net/bonding/*; do
+            [ -f "$b" ] && echo "-- $b --" && cat "$b"
+        done
+        echo "--- dmesg (tail) ---"
+        dmesg | tail -100
+        echo "--- failed interfaces file ---"
+        cat "$INTERFACES"
+        echo "=== end of snapshot ==="
+    } > "$DIAG_LOG" 2>&1
+}
+
+watchdog() {
+    waited=0
+    while [ "$waited" -lt "$TIMEOUT" ]; do
+        have_ipv4 && exit 0
+        sleep 5
+        waited=$((waited + 5))
+    done
+
+    logger -t netfailsafe "no IPv4 address after ${TIMEOUT}s, reverting network configuration"
+    diag_snapshot
+
+    mv "$INTERFACES" "$FAILED"
+    if [ -f "$BACKUP" ] && ! cmp -s "$BACKUP" "$FAILED"; then
+        logger -t netfailsafe "restoring $BACKUP"
+        cp "$BACKUP" "$INTERFACES"
+    else
+        logger -t netfailsafe "restoring firmware default configuration"
+        cp "$ROM_DEFAULT" "$INTERFACES"
+    fi
+    sync
+    reboot
+}
+
+case "$1" in
+    start)
+        # Nothing to guard when running the pristine firmware configuration
+        [ -f "$DISABLE_MARKER" ] && exit 0
+        [ -f "$OVERLAY_INTERFACES" ] || exit 0
+        cmp -s "$INTERFACES" "$ROM_DEFAULT" && exit 0
+
+        watchdog &
+        ;;
+    stop)
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}"
+        exit 1
+        ;;
+esac

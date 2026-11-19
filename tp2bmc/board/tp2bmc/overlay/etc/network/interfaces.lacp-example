@@ -1,0 +1,50 @@
+# Example: LACP (802.3ad) bond over both external NICs (ge0 + ge1)
+#
+# Requirements:
+#   - Firmware built with the switch LAG offload patch
+#     (tp2bmc/patches/linux/switch-lag-support.patch) and CONFIG_BONDING=y.
+#   - The two ports on the upstream switch configured as an LACP
+#     link aggregation group (802.3ad, not a static LAG).
+#
+# See docs/lacp-bonding.md for the full guide.
+#
+# IMPORTANT: configure the LACP aggregation group on the upstream switch
+# BEFORE activating this file. An 802.3ad bond without an LACP partner on
+# the other end never comes up (NO-CARRIER) — the BMC will be unreachable
+# over the network. This is expected 802.3ad behavior, not a fault.
+#
+# VLANs: the BMC sends all its traffic (including DHCP) untagged; the
+# switch's native VLAN on the aggregated port decides which network it
+# lands in. If your management network is not the default VLAN, verify the
+# native VLAN on the LAG itself AFTER creating the aggregation — creating a
+# LAG can silently reset the port profile to the default VLAN.
+#
+# If the board does not obtain an IPv4 address within 5 minutes of boot,
+# the network failsafe (/etc/init.d/S41netfailsafe) automatically restores
+# /etc/network/interfaces.bak (or the firmware default), writes a diagnostic
+# snapshot to /etc/network/failsafe-diag.log, and reboots.
+#
+# To activate:
+#   cp /etc/network/interfaces /etc/network/interfaces.bak
+#   cp /etc/network/interfaces.lacp-example /etc/network/interfaces
+#   reboot
+
+auto lo
+iface lo inet loopback
+
+auto bond0
+iface bond0
+  use bond
+  bond-members ge0 ge1
+  bond-mode 802.3ad
+  bond-xmit-hash-policy layer3+4
+  bond-lacp-rate fast
+  bond-miimon 100
+  bond-min-links 1
+
+auto br0
+iface br0 inet dhcp
+  bridge-ports node1 node2 node3 node4 bond0
+  pre-up /etc/network/nfs_check
+  wait-delay 15
+  hostname $(hostname)

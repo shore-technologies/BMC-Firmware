@@ -1,0 +1,68 @@
+#!/bin/sh
+#
+# This executor is responsible for setting up bond/LAG interfaces.
+#
+# Sat, 03 Oct 2020 20:42:19 +0200
+#  -- Maximilian Wilhelm <max@sdn.clinic>
+#
+# Patched for tp2bmc: with CONFIG_BONDING=y the kernel auto-creates an
+# unconfigured bond0 (balance-rr, no members) at boot. The stock executor
+# bails out ("exit 0") when the interface already exists, leaving the bond
+# in the wrong mode with no members and the board without network. Instead,
+# apply the configured options to the pre-existing device and enslave the
+# members.
+#
+[ -n "$VERBOSE" ] && set -x
+
+get_bond_options() {
+	# We only care for options of format IF_BOND_<OPTION_NAME>
+	env | grep '^IF_BOND_[A-Z0-9_]\+' | while IFS="=" read opt value; do
+		# Members are handled seperately
+		if [ "${opt}" = "IF_BOND_MEMBERS" ]; then
+			continue
+		fi
+
+		# Convert options for the actual name
+		real_opt=$(echo "${opt}" | sed -e 's/^IF_BOND_\([A-Z0-9_]\+\)/\1/' | tr '[A-Z]' '[a-z]')
+
+		echo -n " ${real_opt} ${value}"
+	done
+}
+
+case "$PHASE" in
+	depend)
+		echo "${IF_BOND_MEMBERS}"
+		;;
+
+	create)
+		# Gather bonding options for this interface
+		options=$(get_bond_options)
+
+		if [ -d "/sys/class/net/${IFACE}" ]; then
+			# Device pre-exists (kernel auto-created bond0):
+			# reconfigure it in place. Mode changes require the
+			# device down and slave-less; both hold at boot.
+			${MOCK} ip link set "${IFACE}" down
+			${MOCK} ip link set dev "${IFACE}" type bond ${options}
+		else
+			# Create bond
+			${MOCK} ip link add "${IFACE}" type bond ${options}
+		fi
+
+		# Add members to bundle
+		for member_iface in ${IF_BOND_MEMBERS}; do
+			# Work around the current execution order
+			${MOCK} ip link set "${member_iface}" down
+			${MOCK} ip link set master "${IFACE}" "${member_iface}"
+			${MOCK} ip link set "${member_iface}" up
+		done
+		;;
+
+	destroy)
+		if [ -z "${MOCK}" -a ! -d "/sys/class/net/${IFACE}" ]; then
+			exit 0
+		fi
+
+		${MOCK} ip link del "${IFACE}"
+		;;
+esac
