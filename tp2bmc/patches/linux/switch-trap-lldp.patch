@@ -1,0 +1,50 @@
+--- a/drivers/net/dsa/realtek/rtl8365mb.c
++++ b/drivers/net/dsa/realtek/rtl8365mb.c
+@@ -331,6 +331,19 @@
+ #define RTL8365MB_RMA_CTRL02_REG			0x0802
+ #define   RTL8365MB_RMA_CTRL02_OPERATION_OFFSET		7
+ #define   RTL8365MB_RMA_CTRL02_OPERATION_MASK		0x0180
++
++/* RMA control for 01-80-C2-00-00-0E (LLDP). */
++#define RTL8365MB_RMA_CTRL0E_REG			0x080E
++#define   RTL8365MB_RMA_CTRL0E_OPERATION_OFFSET		7
++#define   RTL8365MB_RMA_CTRL0E_OPERATION_MASK		0x0180
++
++/* LLDP ethertype classifier and enable register. */
++#define RTL8365MB_RMA_CTRL_LLDP_REG			0x0832
++#define   RTL8365MB_RMA_CTRL_LLDP_OPERATION_OFFSET	7
++#define   RTL8365MB_RMA_CTRL_LLDP_OPERATION_MASK	0x0180
++#define RTL8365MB_RMA_LLDP_EN_REG			0x0833
++#define   RTL8365MB_RMA_LLDP_EN_MASK			BIT(0)
++
+ #define   RTL8365MB_RMA_OPERATION_FORWARD		0
+ #define   RTL8365MB_RMA_OPERATION_TRAP_TO_CPU		1
+ 
+@@ -3220,6 +3233,27 @@
+ 	if (ret)
+ 		goto out_teardown_irq;
+ 
++	/* Trap LLDP and deliver it to lldpd on the DSA user ports. */
++	ret = regmap_update_bits(priv->map, RTL8365MB_RMA_CTRL0E_REG,
++				 RTL8365MB_RMA_CTRL0E_OPERATION_MASK,
++				 RTL8365MB_RMA_OPERATION_TRAP_TO_CPU
++					 << RTL8365MB_RMA_CTRL0E_OPERATION_OFFSET);
++	if (ret)
++		goto out_teardown_irq;
++
++	ret = regmap_update_bits(priv->map, RTL8365MB_RMA_CTRL_LLDP_REG,
++				 RTL8365MB_RMA_CTRL_LLDP_OPERATION_MASK,
++				 RTL8365MB_RMA_OPERATION_TRAP_TO_CPU
++					 << RTL8365MB_RMA_CTRL_LLDP_OPERATION_OFFSET);
++	if (ret)
++		goto out_teardown_irq;
++
++	ret = regmap_update_bits(priv->map, RTL8365MB_RMA_LLDP_EN_REG,
++				 RTL8365MB_RMA_LLDP_EN_MASK,
++				 RTL8365MB_RMA_LLDP_EN_MASK);
++	if (ret)
++		goto out_teardown_irq;
++
+ 
+ 	/* Configure ports */
+ 	for (i = 0; i < priv->num_ports; i++) {
