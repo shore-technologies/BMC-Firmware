@@ -1,0 +1,8 @@
+diff --git a/net/dsa/tag_rtl8_4.c b/net/dsa/tag_rtl8_4.c
+--- a/net/dsa/tag_rtl8_4.c
++++ b/net/dsa/tag_rtl8_4.c
+@@ -126 +126,3 @@ static void rtl8_4_write_tag(struct sk_buff *skb, struct net_device *dev,
+-	tag16[2] = htons(FIELD_PREP(RTL8_4_LEARN_DIS, 1));
++	tag16[2] = htons(FIELD_PREP(RTL8_4_LEARN_DIS,
++					   !ether_addr_equal(eth_hdr(skb)->h_source,
++							     dev->dev_addr)));
